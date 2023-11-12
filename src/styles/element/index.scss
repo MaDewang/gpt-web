@@ -1,0 +1,14 @@
+@forward 'element-plus/dist/index.css';
+:root {
+    --el-color-primary: rgb(45, 106, 79);
+}
+
+.el-button {
+    --el-button-hover-bg-color: none;
+    --el-button-text-color: rgb(45, 106, 79);
+    --el-button-hover-text-color: rgb(45, 106, 79);
+    --el-button-hover-border-color: rgb(45, 106, 79);
+}
+.el-button.is-circle {
+    border-radius: 15px;
+}
