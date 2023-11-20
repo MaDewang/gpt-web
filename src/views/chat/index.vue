@@ -5,7 +5,7 @@
                 <div class="chat-sessions flex flex-col h-full">
                     <div class="flex justify-between p-3">
                         <el-input v-model="inputVal" class="w-50 m-2" placeholder="输入搜索对话" :prefix-icon="Search" />
-                        <el-button :icon="Plus" circle />
+                        <el-button :icon="Plus" circle @click="newMessage" />
                     </div>
                     <div class="sessions-box p-3 pt-0">
                         <div :class="['sessions', { active: item.id === activeId }]" v-for="item in sessionlist"
@@ -58,7 +58,7 @@
                                             <div class="chat-text">
                                                 <div class="whitespace-pre-wrap mt-2">
                                                     <p>
-                                                        {{ message.content }}
+                                                        <v-md-preview :text="message.content"></v-md-preview>
                                                     </p>
                                                 </div>
                                             </div>
@@ -74,7 +74,8 @@
                         <div class="chat-input-box">
                             <div class="flex items-center">
                                 <el-input v-model="inputVal2" :autosize="{ minRows: 2, maxRows: 4 }" type="textarea"
-                                    placeholder="输入消息内容（Shift+Enter换行）" />
+                                    ref="textareaDom" placeholder="输入消息内容（Shift+Enter换行）" @keydown="handleKeyDown"
+                                    clearable />
                                 <el-button :icon="Promotion" circle @click="sendMessage" />
                             </div>
 
@@ -90,65 +91,138 @@
 <script lang="ts" setup>
 import FoldContainer from '@/components/FoldContainer.vue';
 import { Search, Plus, Promotion } from '@element-plus/icons-vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 const inputVal = ref('')
-const activeId = ref(1)
-const activeSession = computed(() => {
-    return sessionlist.value.find(item => item.id === activeId.value)
-})
+const activeId = ref('')
+
 type session = {
-    id: number,
+    id: string,
     title: string,
-    content: string,
+    messages: Message[],
     time: string
 }
-const sessionlist = ref<session[]>([
-    {
-        id: 1,
-        title: '测试1',
-        content: '测试1',
-        time: '2021-08-01 12:00:00',
-
-    },
-    {
-        id: 2,
-        title: '测试2',
-        content: '测试2',
-        time: '2021-08-01 12:00:00',
-
-    }
-])
-
+type Message = { id: string; content: string; isUser: boolean; }
+const sessionlist = ref<session[]>([])
+const activeSession = computed(() => {
+    return sessionlist.value.find(item => item.id === activeId.value) || sessionlist.value[0]
+})
 const itemClick = (item: session) => {
     activeId.value = item.id
 }
 
-const messages = ref([
-    // 初始化对话消息
-    { id: 1, content: "你好，欢迎来到ChatGPT！", isUser: false }
-]
-)
+const messages:Message[]  = computed(() => activeSession.value?.messages)
+
+const newMessage = () => {
+    sessionlist.value.push()
+}
+
 const inputVal2 = ref('')
 const sendMessage = () => {
     if (inputVal2.value.trim() !== "") {
         // 添加用户输入消息到对话列表
-        messages.value.push({
-            id: new Date().getTime(),
+        messages.push({
+            id: String(new Date().getTime()),
             content: inputVal2.value,
             isUser: true
         });
+        fetchMessage(inputVal2.value)
         // 清空用户输入
         inputVal2.value = "";
+
         // 发送消息给ChatGPT进行处理（这里只是模拟）
-        setTimeout(() => {
-            messages.value.push({
-                id: new Date().getTime(),
-                content: "这是ChatGPT的回复",
-                isUser: false
-            });
-        }, 1000);
+        // setTimeout(() => {
+        //     messages.value.push({
+        //         id: new Date().getTime(),
+        //         content: "这是ChatGPT的回复",
+        //         isUser: false
+        //     });
+        // }, 1000);
     }
 }
+type MessagesData = {
+    event: string,
+    task_id: string,
+    id: string,
+    answer: string,
+    created_at: number,
+    conversation_id: string
+}
+const fetchMessage = async (val: string) => {
+    const response = await fetch('/api/chat-messages', {
+        method: "POST",
+        headers: {
+            "Authorization": "Bearer app-qnXAy7ykODkZf6QxbNgLtAVd",
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            "inputs": {},
+            "query": val,
+            "response_mode": "streaming",
+            "conversation_id": "",
+            "user": "abc-123"
+        }),
+    });
+
+    if (!response.body) return;
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+
+    while (true) {
+        var { value, done } = await reader.read();
+        if (done) break;
+        value = value || ''
+        const lines = value
+            .toString()
+            .split("\n\n")
+            .filter((line) => line.trim() !== "");
+        let isEnd = false;
+        lines.forEach(item => {
+            const dataStr = item?.replace('undefined', '').replace("data: ", "")
+            if (dataStr === 'event: ping') return;
+            const resData: MessagesData = JSON.parse(dataStr as string)
+            if (resData.event === 'message_end') {
+                isEnd = true
+            } else if (resData.event === 'message') {
+                updataMessage(resData)
+            }
+        })
+        if (isEnd) {
+            break
+        }
+    }
+    function updataMessage(data: MessagesData) {
+        const avtiveData = messages.find(item => item.id === data.id)
+        console.log(data);
+
+        if (!avtiveData) {
+            messages.push({
+                id: data.id,
+                content: data.answer,
+                isUser: false
+            });
+        } else {
+            messages[messages.length - 1].content += data.answer
+        }
+    }
+}
+
+const handleKeyDown = (event) => {
+    if (event.keyCode === 13) {
+        if (event.shiftKey) {
+            inputVal2.value += '\n';
+        } else {
+            sendMessage()
+        }
+    }
+}
+
+onMounted(() => {
+    if (messages.length) {
+        activeId.value = messages[0].id
+    } else {
+        newMessage()
+    }
+})
+
 </script>
 
 <style lang="scss" scoped>
@@ -248,6 +322,7 @@ const sendMessage = () => {
                         background-color: var(--n-merged-color);
                         transition: border-color .3s var(--n-bezier), background-color .3s var(--n-bezier), color .3s var(--n-bezier);
                     }
+
                     &.ai {
                         background-color: var(--aa-bg-body);
                     }
