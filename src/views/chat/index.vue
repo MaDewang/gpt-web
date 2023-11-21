@@ -45,8 +45,8 @@
                         <div class="chat-items">
                             <div id="chat-content" role="none" class="n-scrollbar"
                                 style="--n-scrollbar-bezier: cubic-bezier(.4, 0, .2, 1); --n-scrollbar-color: rgba(0, 0, 0, 0.25); --n-scrollbar-color-hover: rgba(0, 0, 0, 0.4); --n-scrollbar-border-radius: 5px; --n-scrollbar-width: 5px; --n-scrollbar-height: 5px;">
-                                <div role="none" class="n-scrollbar-container">
-                                    <div v-for="message in messages" :key="message.id"
+                                <div role="none" class="n-scrollbar-container" ref="scrollbarContainer">
+                                    <div v-for="message in activeSession?.messages" :key="message.id"
                                         :class="['chat-item', 'p-3', 'mode-list', { user: message.isUser }, { ai: !message.isUser }]">
                                         <span class="n-avatar chat-avatar flex-shrink-0" data-v-e6e4f7e3=""
                                             style="--n-font-size: 14px; --n-border: none; --n-border-radius: 50%; --n-color: rgba(204, 204, 204, 1); --n-color-modal: rgba(204, 204, 204, 1); --n-color-popover: rgba(204, 204, 204, 1); --n-bezier: cubic-bezier(.4, 0, .2, 1); --n-merged-size: var(--n-avatar-size-override, 40px);"><img
@@ -91,36 +91,43 @@
 <script lang="ts" setup>
 import FoldContainer from '@/components/FoldContainer.vue';
 import { Search, Plus, Promotion } from '@element-plus/icons-vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import {conversations, getMessages} from '@/api/index'
+import {getToken} from '@/utils/gpt-versions-config'
 const inputVal = ref('')
 const activeId = ref('')
 
-type session = {
+type Session = {
     id: string,
     title: string,
     messages: Message[],
     time: string
 }
 type Message = { id: string; content: string; isUser: boolean; }
-const sessionlist = ref<session[]>([])
+const sessionlist = ref<Session[]>([])
 const activeSession = computed(() => {
     return sessionlist.value.find(item => item.id === activeId.value) || sessionlist.value[0]
 })
-const itemClick = (item: session) => {
+const itemClick = (item: Session) => {
+    if (activeId.value === item.id) return
     activeId.value = item.id
+    getMessageList(item)
 }
 
-const messages:Message[]  = computed(() => activeSession.value?.messages)
-
 const newMessage = () => {
-    sessionlist.value.push()
+    sessionlist.value.push({
+        id: '',
+        title: '新对话',
+        messages: [],
+        time: ''
+    })
 }
 
 const inputVal2 = ref('')
 const sendMessage = () => {
     if (inputVal2.value.trim() !== "") {
         // 添加用户输入消息到对话列表
-        messages.push({
+        activeSession.value.messages.push({
             id: String(new Date().getTime()),
             content: inputVal2.value,
             isUser: true
@@ -128,15 +135,6 @@ const sendMessage = () => {
         fetchMessage(inputVal2.value)
         // 清空用户输入
         inputVal2.value = "";
-
-        // 发送消息给ChatGPT进行处理（这里只是模拟）
-        // setTimeout(() => {
-        //     messages.value.push({
-        //         id: new Date().getTime(),
-        //         content: "这是ChatGPT的回复",
-        //         isUser: false
-        //     });
-        // }, 1000);
     }
 }
 type MessagesData = {
@@ -151,14 +149,14 @@ const fetchMessage = async (val: string) => {
     const response = await fetch('/api/chat-messages', {
         method: "POST",
         headers: {
-            "Authorization": "Bearer app-qnXAy7ykODkZf6QxbNgLtAVd",
+            "Authorization": `Bearer ${getToken}`,
             "Content-Type": "application/json",
         },
         body: JSON.stringify({
             "inputs": {},
             "query": val,
             "response_mode": "streaming",
-            "conversation_id": "",
+            "conversation_id": activeSession.value.id,
             "user": "abc-123"
         }),
     });
@@ -189,21 +187,26 @@ const fetchMessage = async (val: string) => {
             break
         }
     }
-    function updataMessage(data: MessagesData) {
-        const avtiveData = messages.find(item => item.id === data.id)
-        console.log(data);
-
+}
+const scrollbarContainer = ref()
+function updataMessage(data: MessagesData) {
+        // 滚动到底部
+        if (scrollbarContainer?.value) {
+            scrollbarContainer.value.scrollTo(0, scrollbarContainer.value.scrollHeight)
+        }
+        
+        const avtiveData = activeSession.value.messages.find(item => item.id === data.id)
+        activeSession.value.id = data.conversation_id
         if (!avtiveData) {
-            messages.push({
+            activeSession.value.messages.push({
                 id: data.id,
                 content: data.answer,
                 isUser: false
             });
         } else {
-            messages[messages.length - 1].content += data.answer
+            activeSession.value.messages[activeSession.value.messages.length - 1].content += data.answer
         }
     }
-}
 
 const handleKeyDown = (event) => {
     if (event.keyCode === 13) {
@@ -215,12 +218,36 @@ const handleKeyDown = (event) => {
     }
 }
 
+// 获取会话历史
+const getMessageList = async (session: Session) => {
+    const res = await getMessages(session.id)
+    const list:Message[] = [];
+    (res?.data as []).forEach((item: any) => {
+        list.push({id: item.id, content: item.query, isUser: true}, {id: item.id, content: item.answer, isUser: false})
+    })
+    session.messages = list
+}
+
 onMounted(() => {
-    if (messages.length) {
-        activeId.value = messages[0].id
+    if (sessionlist.value.length) {
+        activeId.value = activeSession.value.messages[0].id
     } else {
         newMessage()
     }
+
+    // 获取会话列表
+    conversations().then(res => {
+        const data: [] = res.data as [] || []
+        sessionlist.value = data.map((item: any) => {
+            return {
+                id: item.id,
+                title: item.name,
+                messages: [],
+                time: ''
+            }
+        })
+        sessionlist.value[0] && getMessageList(sessionlist.value[0])
+    })
 })
 
 </script>

@@ -1,5 +1,8 @@
 import axios, { AxiosInstance, AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import { ElMessage  } from 'element-plus'
+import { getToken } from '@/utils/gpt-versions-config'
+import { getFingerprint } from '@/utils/fingerprint'
+
 // 数据返回的接口
 // 定义请求响应参数，不含data
 interface Result {
@@ -11,7 +14,6 @@ interface Result {
 interface ResultData<T = any> extends Result {
     data?: T;
 }
-const URL: string = process.env.VUE_APP_PROXY_API || ''
 enum RequestEnums {
     TIMEOUT = 20000,
     OVERDUE = 600, // 登录失效
@@ -20,7 +22,7 @@ enum RequestEnums {
 }
 const defaultConfig = {
     // 默认地址
-    baseURL: URL as string,
+    baseURL: import.meta.env.VITE_APP_PROXY_API || '',
     // 设置超时时间
     timeout: RequestEnums.TIMEOUT as number,
     // 跨域时候允许携带凭证
@@ -43,17 +45,20 @@ class RequestHttp {
          * token校验(JWT) : 接受服务器返回的token,存储到vuex/pinia/本地储存当中
          */
         this.service.interceptors.request.use(
-            (config: InternalAxiosRequestConfig) => {
+            async (config: InternalAxiosRequestConfig) => {
                 // 保存控制器
                 const controller = new AbortController()
                 const url = config.url || ''
                 config.signal = controller.signal
                 this.abortControllerMap.set(url, controller)
 
-                const token = localStorage.getItem('token') || '';
+                const user = await getFingerprint()
+                config.params.user || (config.params.user = user)
+
+                const token = getToken()
                 if (token) {
                     config.headers.set({
-                        'Authorization': token, // 请求头中携带token信息
+                        'Authorization': `Bearer ${token}`, // 请求头中携带token信息
                     })
                 }
                 return config
