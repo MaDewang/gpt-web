@@ -19,7 +19,13 @@
                                     <div role="none" class="n-space animate__animated animate__fadeInRight animate__faster"
                                         style="display: flex; flex-flow: wrap; justify-content: flex-start; gap: 4px 8px;">
                                         <IconFont type="wenbenshuru" class="icon" />
-                                        <IconFont type="diandian" class="icon" />
+                                        <el-popover popper-class="diandian-popper" :width="60">
+                                            <el-button type="danger" text @click="handleDelSession(item)">删除</el-button>
+                                            <template #reference>
+                                                <IconFont type="diandian" class="icon" />
+                                            </template>
+                                        </el-popover>
+
                                     </div>
                                 </div>
                             </div>
@@ -62,7 +68,9 @@
                                                     </p>
                                                 </div>
                                             </div>
-                                            <div class="mt-2 text-xs text-muted chat-toolbar"></div>
+                                            <div class="mt-2 text-xs text-muted chat-toolbar">
+                                                <el-button type="danger" text @click="message.">取消回答</el-button>
+                                            </div>
                                         </div>
 
                                     </div>
@@ -70,6 +78,9 @@
                                 <div class="n-scrollbar-rail n-scrollbar-rail--vertical" data-scrollbar-rail="true"
                                     aria-hidden="true"><!----></div><!---->
                             </div>
+                        </div>
+                        <div class="tool">
+                            
                         </div>
                         <div class="chat-input-box">
                             <div class="flex items-center">
@@ -92,8 +103,8 @@
 import FoldContainer from '@/components/FoldContainer.vue';
 import { Search, Plus, Promotion } from '@element-plus/icons-vue'
 import { computed, onMounted, ref } from 'vue'
-import {conversations, getMessages} from '@/api/index'
-import {getToken} from '@/utils/gpt-versions-config'
+import { conversations, getMessages, chatMessages, delSession, cancelChatMessages } from '@/api/index'
+import { ElInput, ElButton, ElPopover, } from 'element-plus';
 const inputVal = ref('')
 const activeId = ref('')
 
@@ -101,11 +112,12 @@ type Session = {
     id: string,
     title: string,
     messages: Message[],
-    time: string
+    time: string,
+    isnew?: boolean
 }
-type Message = { id: string; content: string; isUser: boolean; }
+type Message = { id: string; content: string; isUser: boolean; cancelRequest?: () => void, isEnd?: boolean }
 const sessionlist = ref<Session[]>([])
-const activeSession = computed(() => {
+const activeSession = computed<Session>(() => {
     return sessionlist.value.find(item => item.id === activeId.value) || sessionlist.value[0]
 })
 const itemClick = (item: Session) => {
@@ -114,10 +126,13 @@ const itemClick = (item: Session) => {
     getMessageList(item)
 }
 
+let idCount = 0
 const newMessage = () => {
+    idCount++
     sessionlist.value.push({
-        id: '',
+        id: String(idCount),
         title: '新对话',
+        isnew: true,
         messages: [],
         time: ''
     })
@@ -137,6 +152,7 @@ const sendMessage = () => {
         inputVal2.value = "";
     }
 }
+const answering = ref(false)
 type MessagesData = {
     event: string,
     task_id: string,
@@ -146,67 +162,68 @@ type MessagesData = {
     conversation_id: string
 }
 const fetchMessage = async (val: string) => {
-    const response = await fetch('/api/chat-messages', {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${getToken}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            "inputs": {},
-            "query": val,
-            "response_mode": "streaming",
-            "conversation_id": activeSession.value.id,
-            "user": "abc-123"
-        }),
-    });
+    answering.value = true
+    const response: (Response & { cancelRequest?: () => void }) = await chatMessages({
+        query: val,
+        conversation_id: activeSession.value.isnew ? '' : activeSession.value.id
+    })
 
     if (!response.body) return;
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
 
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    const activeData: Message = {
+        id: '',
+        content: '',
+        isUser: false
+    }
+    const cancelRequest = () => {
+        response?.cancelRequest && response?.cancelRequest()
+    }
+    activeData.cancelRequest = cancelRequest
+    activeSession.value.messages.push(activeData)
     while (true) {
+        console.log(1111);
+
         var { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+            activeData.isEnd = true
+            break;
+        }
         value = value || ''
         const lines = value
             .toString()
             .split("\n\n")
-            .filter((line) => line.trim() !== "");
+            .filter((line: string) => line.trim() !== "");
         let isEnd = false;
-        lines.forEach(item => {
+        lines.forEach((item: string) => {
             const dataStr = item?.replace('undefined', '').replace("data: ", "")
             if (dataStr === 'event: ping') return;
             const resData: MessagesData = JSON.parse(dataStr as string)
             if (resData.event === 'message_end') {
                 isEnd = true
             } else if (resData.event === 'message') {
-                updataMessage(resData)
+                // 滚动到底部
+                if (scrollbarContainer?.value) {
+                    scrollbarContainer.value.scrollTo(0, scrollbarContainer.value.scrollHeight)
+                }
+                activeData.content += resData.answer
+
+                activeSession.value.id = resData.conversation_id
+                if (activeSession.value.isnew) {
+                    activeSession.value.isnew = false
+                    activeSession.value.title = activeSession.value.messages[activeSession.value.messages.length - 2].content
+                }
             }
         })
         if (isEnd) {
+            activeData.isEnd = true
             break
         }
     }
+    answering.value = false
 }
 const scrollbarContainer = ref()
-function updataMessage(data: MessagesData) {
-        // 滚动到底部
-        if (scrollbarContainer?.value) {
-            scrollbarContainer.value.scrollTo(0, scrollbarContainer.value.scrollHeight)
-        }
-        
-        const avtiveData = activeSession.value.messages.find(item => item.id === data.id)
-        activeSession.value.id = data.conversation_id
-        if (!avtiveData) {
-            activeSession.value.messages.push({
-                id: data.id,
-                content: data.answer,
-                isUser: false
-            });
-        } else {
-            activeSession.value.messages[activeSession.value.messages.length - 1].content += data.answer
-        }
-    }
+
 
 const handleKeyDown = (event) => {
     if (event.keyCode === 13) {
@@ -218,23 +235,8 @@ const handleKeyDown = (event) => {
     }
 }
 
-// 获取会话历史
-const getMessageList = async (session: Session) => {
-    const res = await getMessages(session.id)
-    const list:Message[] = [];
-    (res?.data as []).forEach((item: any) => {
-        list.push({id: item.id, content: item.query, isUser: true}, {id: item.id, content: item.answer, isUser: false})
-    })
-    session.messages = list
-}
-
-onMounted(() => {
-    if (sessionlist.value.length) {
-        activeId.value = activeSession.value.messages[0].id
-    } else {
-        newMessage()
-    }
-
+// 获取会话列表
+const handleGetConversations = () => {
     // 获取会话列表
     conversations().then(res => {
         const data: [] = res.data as [] || []
@@ -246,9 +248,41 @@ onMounted(() => {
                 time: ''
             }
         })
+        if (sessionlist.value.length) {
+            activeId.value = sessionlist.value[0].id
+        } else {
+            newMessage()
+        }
         sessionlist.value[0] && getMessageList(sessionlist.value[0])
     })
+}
+
+// 获取会话历史
+const getMessageList = async (session: Session) => {
+    if (session.isnew) return
+    const res = await getMessages(session.id)
+    const list: Message[] = [];
+    (res?.data as []).forEach((item: any) => {
+        list.push({ id: item.id, content: item.query, isUser: true }, { id: item.id, content: item.answer, isUser: false })
+    })
+    console.log(list);
+
+    session.messages = list
+}
+
+onMounted(() => {
+    handleGetConversations()
 })
+
+// 删除会话
+const handleDelSession = async (item: Session) => {
+    if (item.isnew) {
+        sessionlist.value = sessionlist.value.filter(v => v.id !== item.id)
+        return
+    }
+    await delSession(item.id)
+    handleGetConversations()
+}
 
 </script>
 
@@ -371,5 +405,16 @@ onMounted(() => {
     font-weight: bold;
     margin-left: 12px;
     padding: 8px 24px;
+}
+
+::v-deep(.whitespace-pre-wrap) {
+    white-space: normal;
+}
+</style>
+
+<style lang="scss">
+.diandian-popper.el-popper {
+    padding: 0;
+    min-width: 20px;
 }
 </style>

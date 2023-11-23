@@ -32,11 +32,13 @@ const defaultConfig = {
 class RequestHttp {
     // 定义成员变量并指定类型
     service: AxiosInstance;
+    config: any;
     // 存放取消请求控制器Map
     abortControllerMap: Map<string, AbortController>;
     public constructor(config?: AxiosRequestConfig) {
         // 实例化axios
-        this.service = axios.create(Object.assign({}, defaultConfig, config));
+        this.config = Object.assign({}, defaultConfig, config)
+        this.service = axios.create(this.config);
         this.abortControllerMap = new Map();
 
         /**
@@ -53,6 +55,7 @@ class RequestHttp {
                 this.abortControllerMap.set(url, controller)
 
                 const user = await getFingerprint()
+                config.params = config.params || {}
                 config.params.user || (config.params.user = user)
 
                 const token = getToken()
@@ -134,6 +137,27 @@ class RequestHttp {
     }
     delete<T>(url: string, params?: object): Promise<ResultData<T>> {
         return this.service.delete(url, { params });
+    }
+    async stream(url: string, params?: object) {
+        const user = await getFingerprint()
+        // 保存控制器
+        const controller = new AbortController()
+        const signal = controller.signal
+        params = params || {}
+        this.abortControllerMap.set(url + JSON.stringify(params).substring(0, 60), controller)
+        return fetch(`${this.config.baseURL || ''}${url}`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${getToken()}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({...params, user}),
+                signal
+            }).then(res => {
+                this.abortControllerMap.delete(url);
+                (res as (Response & {cancelRequest: () => void}))['cancelRequest'] = () => controller.abort()
+                return res
+            })
     }
 
     /**
