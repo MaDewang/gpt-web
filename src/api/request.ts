@@ -55,13 +55,19 @@ class RequestHttp {
                 this.abortControllerMap.set(url, controller)
 
                 const user = await getFingerprint()
-                config.params = config.params || {}
-                config.params.user || (config.params.user = user)
-
+                
+                if (config.method === 'delete') {
+                    config.data = config.data || {}
+                    config.data.user = user
+                } else {
+                    config.params = config.params || {}
+                    config.params.user = user
+                }
                 const token = getToken()
                 if (token) {
                     config.headers.set({
                         'Authorization': `Bearer ${token}`, // 请求头中携带token信息
+                        "Content-Type": "application/json",
                     })
                 }
                 return config

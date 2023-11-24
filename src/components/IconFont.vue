@@ -7,8 +7,9 @@
 </template>
   
 <script lang="ts" setup>
-import { ref, computed, defineProps } from 'vue';
+import { ref, computed } from 'vue';
 // const attrs = useAttrs();
+
 const props = defineProps({
   type: {
     type: String,

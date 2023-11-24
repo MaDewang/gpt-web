@@ -1,20 +1,25 @@
+// @ts-ignore
+import tokenMap from "/public/tokenMap.json"
 type TokenMap = {
-    '1': string,
-    '2': string
+    [key: string]: string;
 }
 type TokenMapKey = keyof TokenMap
 
-export const tokenMap = {
-    1: 'app-qnXAy7ykODkZf6QxbNgLtAVd',
-    2: 'app-qnXAy7ykODkZf6QxbNgLtAVd',
+export const getTokens = () => {
+    return Object.keys(tokenMap).map(key => {
+        return {
+            label: key,
+            value: tokenMap[key]
+        }
+    })
 }
-let modelType: TokenMapKey = '1'
+let modelType: TokenMapKey = Object.keys(tokenMap)[0]
 
 export const getModelType = () => {
     return modelType
 }
 
-export const setModelType =(type: keyof TokenMap) => {
+export const setModelType =(type: string) => {
     if (tokenMap[type]) {
         modelType = type
         localStorage.setItem('modelType', type)
@@ -24,4 +29,4 @@ export const setModelType =(type: keyof TokenMap) => {
 export const getToken = () => {
     return tokenMap[modelType]
 }
-setModelType(localStorage.getItem('modelType') as TokenMapKey || '1')
+setModelType(String(localStorage.getItem('modelType') || modelType))

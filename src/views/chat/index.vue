@@ -69,7 +69,7 @@
                                                 </div>
                                             </div>
                                             <div class="mt-2 text-xs text-muted chat-toolbar">
-                                                <el-button type="danger" text @click="message.">取消回答</el-button>
+                                                <el-button v-if="message.answering" type="danger" text @click="() => message.cancelRequest && message.cancelRequest()">取消回答</el-button>
                                             </div>
                                         </div>
 
@@ -85,11 +85,10 @@
                         <div class="chat-input-box">
                             <div class="flex items-center">
                                 <el-input v-model="inputVal2" :autosize="{ minRows: 2, maxRows: 4 }" type="textarea"
-                                    ref="textareaDom" placeholder="输入消息内容（Shift+Enter换行）" @keydown="handleKeyDown"
+                                 placeholder="输入消息内容（Shift+Enter换行）" @keydown="handleKeyDown"
                                     clearable />
                                 <el-button :icon="Promotion" circle @click="sendMessage" />
                             </div>
-
                         </div>
                     </div>
                 </div>
@@ -102,8 +101,8 @@
 <script lang="ts" setup>
 import FoldContainer from '@/components/FoldContainer.vue';
 import { Search, Plus, Promotion } from '@element-plus/icons-vue'
-import { computed, onMounted, ref } from 'vue'
-import { conversations, getMessages, chatMessages, delSession, cancelChatMessages } from '@/api/index'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { conversations, getMessages, chatMessages, delSession } from '@/api/index'
 import { ElInput, ElButton, ElPopover, } from 'element-plus';
 const inputVal = ref('')
 const activeId = ref('')
@@ -115,7 +114,7 @@ type Session = {
     time: string,
     isnew?: boolean
 }
-type Message = { id: string; content: string; isUser: boolean; cancelRequest?: () => void, isEnd?: boolean }
+type Message = { id: string; content: string; isUser: boolean; cancelRequest?: () => void, answering?: boolean }
 const sessionlist = ref<Session[]>([])
 const activeSession = computed<Session>(() => {
     return sessionlist.value.find(item => item.id === activeId.value) || sessionlist.value[0]
@@ -129,15 +128,25 @@ const itemClick = (item: Session) => {
 let idCount = 0
 const newMessage = () => {
     idCount++
-    sessionlist.value.push({
+    sessionlist.value.unshift({
         id: String(idCount),
         title: '新对话',
         isnew: true,
         messages: [],
         time: ''
     })
+    activeId.value = String(idCount)
 }
 
+const scrollbarContainer = ref()
+const scrollToEnd = () => {
+    setTimeout(() => {
+        // 滚动到底部
+        if (scrollbarContainer?.value) {
+            scrollbarContainer.value.scrollTo(0, scrollbarContainer.value.scrollHeight)
+        }
+    })
+}
 const inputVal2 = ref('')
 const sendMessage = () => {
     if (inputVal2.value.trim() !== "") {
@@ -148,11 +157,13 @@ const sendMessage = () => {
             isUser: true
         });
         fetchMessage(inputVal2.value)
-        // 清空用户输入
-        inputVal2.value = "";
+        scrollToEnd()
     }
+    setTimeout(() => {
+        inputVal2.value = "";
+    })
+    scrollToEnd()
 }
-const answering = ref(false)
 type MessagesData = {
     event: string,
     task_id: string,
@@ -162,7 +173,6 @@ type MessagesData = {
     conversation_id: string
 }
 const fetchMessage = async (val: string) => {
-    answering.value = true
     const response: (Response & { cancelRequest?: () => void }) = await chatMessages({
         query: val,
         conversation_id: activeSession.value.isnew ? '' : activeSession.value.id
@@ -171,22 +181,23 @@ const fetchMessage = async (val: string) => {
     if (!response.body) return;
 
     const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-    const activeData: Message = {
+    const activeData: Message = reactive({
         id: '',
         content: '',
-        isUser: false
-    }
+        isUser: false,
+        answering: true
+    })
     const cancelRequest = () => {
         response?.cancelRequest && response?.cancelRequest()
+        activeData.answering = false
     }
     activeData.cancelRequest = cancelRequest
+    const len = activeSession.value.messages.length
     activeSession.value.messages.push(activeData)
     while (true) {
-        console.log(1111);
-
         var { value, done } = await reader.read();
         if (done) {
-            activeData.isEnd = true
+            activeData.answering = false
             break;
         }
         value = value || ''
@@ -202,11 +213,9 @@ const fetchMessage = async (val: string) => {
             if (resData.event === 'message_end') {
                 isEnd = true
             } else if (resData.event === 'message') {
-                // 滚动到底部
-                if (scrollbarContainer?.value) {
-                    scrollbarContainer.value.scrollTo(0, scrollbarContainer.value.scrollHeight)
-                }
                 activeData.content += resData.answer
+                // 滚动到底部
+                scrollToEnd()
 
                 activeSession.value.id = resData.conversation_id
                 if (activeSession.value.isnew) {
@@ -214,21 +223,20 @@ const fetchMessage = async (val: string) => {
                     activeSession.value.title = activeSession.value.messages[activeSession.value.messages.length - 2].content
                 }
             }
+            activeSession.value.messages[len] = activeData
         })
         if (isEnd) {
-            activeData.isEnd = true
+            activeData.answering = false
             break
         }
     }
-    answering.value = false
 }
-const scrollbarContainer = ref()
 
 
-const handleKeyDown = (event) => {
-    if (event.keyCode === 13) {
-        if (event.shiftKey) {
-            inputVal2.value += '\n';
+const handleKeyDown = (event: KeyboardEvent | Event) => {
+    if (event instanceof KeyboardEvent) {
+    if (event.shiftKey) {
+        // 在这里执行带有 shift 键的逻辑
         } else {
             sendMessage()
         }
@@ -265,9 +273,8 @@ const getMessageList = async (session: Session) => {
     (res?.data as []).forEach((item: any) => {
         list.push({ id: item.id, content: item.query, isUser: true }, { id: item.id, content: item.answer, isUser: false })
     })
-    console.log(list);
-
     session.messages = list
+    scrollToEnd()
 }
 
 onMounted(() => {
